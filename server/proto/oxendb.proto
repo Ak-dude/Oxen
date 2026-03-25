@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package oxendb.v1;
+
+option go_package = "oxendb/server/proto/oxendbpb";
+
+// OxenDB gRPC service — mirrors the REST API surface.
+service OxenDB {
+  // Point lookup: returns the value for a key or NOT_FOUND.
+  rpc Get(GetRequest) returns (GetResponse);
+
+  // Upsert a key-value pair.
+  rpc Put(PutRequest) returns (PutResponse);
+
+  // Delete a key (idempotent).
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // Range scan returning a (possibly paginated) sorted slice.
+  rpc Scan(ScanRequest) returns (ScanResponse);
+
+  // Execute an OxenQL query string.
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Execute a batch of put/delete operations.
+  rpc Batch(BatchRequest) returns (BatchResponse);
+
+  // Server-side streaming scan for large result sets.
+  rpc StreamScan(ScanRequest) returns (stream KVPair);
+
+  // Admin: collect server stats.
+  rpc Stats(StatsRequest) returns (StatsResponse);
+
+  // Admin: trigger compaction.
+  rpc Compact(CompactRequest) returns (CompactResponse);
+}
+
+// ---- Messages ----
+
+message GetRequest {
+  bytes key = 1;
+}
+
+message GetResponse {
+  bytes key   = 1;
+  bytes value = 2;
+}
+
+message PutRequest {
+  bytes key   = 1;
+  bytes value = 2;
+}
+
+message PutResponse {
+  string message = 1;
+}
+
+message DeleteRequest {
+  bytes key = 1;
+}
+
+message DeleteResponse {
+  string message = 1;
+}
+
+message ScanRequest {
+  bytes start_key = 1; // inclusive lower bound; omit for open-ended
+  bytes end_key   = 2; // exclusive upper bound; omit for open-ended
+  int32 limit     = 3; // 0 = no limit
+  int32 offset    = 4; // for pagination
+}
+
+message ScanResponse {
+  repeated KVPair pairs = 1;
+  bool            more  = 2; // true if more results exist beyond limit
+}
+
+message KVPair {
+  bytes key   = 1;
+  bytes value = 2;
+}
+
+message QueryRequest {
+  string query = 1; // OxenQL query string
+}
+
+message QueryResponse {
+  string         message = 1;
+  bytes          key     = 2; // populated for GET results
+  bytes          value   = 3; // populated for GET results
+  repeated KVPair pairs  = 4; // populated for SCAN results
+}
+
+message BatchOp {
+  enum OpType {
+    PUT    = 0;
+    DELETE = 1;
+  }
+  OpType op    = 1;
+  bytes  key   = 2;
+  bytes  value = 3; // only for PUT
+}
+
+message BatchRequest {
+  repeated BatchOp ops = 1;
+}
+
+message BatchResponse {
+  int32  applied = 1;
+  string message = 2;
+}
+
+message StatsRequest {}
+
+message StatsResponse {
+  int32  goroutines    = 1;
+  double heap_alloc_mb = 2;
+  double sys_mb        = 3;
+  uint32 gc_runs       = 4;
+  string db_status     = 5;
+}
+
+message CompactRequest {}
+
+message CompactResponse {
+  string message = 1;
+}
