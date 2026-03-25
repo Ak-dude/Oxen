@@ -1,0 +1,69 @@
+# ============================================================================
+# OxenDB .gitignore
+# ============================================================================
+
+# ---- Rust ------------------------------------------------------------------
+/core/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# ---- Go --------------------------------------------------------------------
+/server/bin/
+/server/vendor/
+*.test
+*.out
+# Go build cache
+/server/.cache/
+
+# ---- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+/client/dist/
+/client/build/
+/client/.eggs/
+/client/.venv/
+/client/venv/
+/client/env/
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ---- Environment / secrets -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ---- Editor / OS -----------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.orig
+
+# ---- Data directories (runtime data, not source) ---------------------------
+/data/
+oxendb_data/
+
+# ---- Docker ----------------------------------------------------------------
+*.tar.gz
+
+# ---- Monitoring (auto-generated) -------------------------------------------
+/monitoring/grafana/provisioning/dashboards/*.json.bak
