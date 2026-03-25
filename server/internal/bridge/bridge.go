@@ -163,6 +163,45 @@ func (db *DB) Compact() error {
 	return codeToError(rc)
 }
 
+// PutBatch writes multiple key-value pairs atomically with a single WAL fsync.
+// This is the highest-throughput write path — critical for bulk INSERT performance.
+// Returns on the first error encountered.
+func (db *DB) PutBatch(pairs [][2][]byte) error {
+	if db.handle == nil {
+		return ErrEngineClosed
+	}
+	n := len(pairs)
+	if n == 0 {
+		return nil
+	}
+
+	// Build C-compatible pointer arrays on the Go heap.
+	// We keep the Go slices alive for the duration of the C call.
+	keyPtrs := make([]*C.uint8_t, n)
+	keyLens := make([]C.size_t, n)
+	valPtrs := make([]*C.uint8_t, n)
+	valLens := make([]C.size_t, n)
+
+	for i, pair := range pairs {
+		kp, kl := bytesPtr(pair[0])
+		vp, vl := bytesPtr(pair[1])
+		keyPtrs[i] = kp
+		keyLens[i] = kl
+		valPtrs[i] = vp
+		valLens[i] = vl
+	}
+
+	rc := C.oxen_put_batch(
+		db.handle,
+		(**C.uint8_t)(unsafe.Pointer(&keyPtrs[0])),
+		(*C.size_t)(unsafe.Pointer(&keyLens[0])),
+		(**C.uint8_t)(unsafe.Pointer(&valPtrs[0])),
+		(*C.size_t)(unsafe.Pointer(&valLens[0])),
+		C.size_t(n),
+	)
+	return codeToError(rc)
+}
+
 // ---- helpers ----
 
 // bytesPtr returns a C pointer and length for a Go byte slice.

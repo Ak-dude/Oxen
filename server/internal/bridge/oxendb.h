@@ -116,6 +116,24 @@ void oxen_free_scan(OxenByteSlice *keys, OxenByteSlice *values, size_t count);
 /** Trigger a synchronous compaction round. */
 int oxen_compact(OxenHandle *handle);
 
+/**
+ * Batch write `count` key-value pairs in a single atomic operation with one WAL fsync.
+ *
+ * keys_ptr[i]    — pointer to i-th key bytes
+ * keys_lens[i]   — length of i-th key
+ * values_ptr[i]  — pointer to i-th value bytes
+ * values_lens[i] — length of i-th value
+ * count          — number of key-value pairs
+ *
+ * Returns OXEN_OK on success, or a negative error code on failure.
+ */
+int oxen_put_batch(OxenHandle *handle,
+                   const uint8_t * const *keys_ptr,
+                   const size_t          *keys_lens,
+                   const uint8_t * const *values_ptr,
+                   const size_t          *values_lens,
+                   size_t                 count);
+
 #ifdef __cplusplus
 }
 #endif

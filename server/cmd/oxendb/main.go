@@ -18,6 +18,8 @@ import (
 	"oxendb/server/internal/api"
 	"oxendb/server/internal/bridge"
 	"oxendb/server/internal/config"
+	"oxendb/server/internal/pg"
+	sqlpkg "oxendb/server/internal/sql"
 )
 
 func main() {
@@ -53,6 +55,19 @@ func main() {
 		}
 	}()
 
+	// ---- SQL engine ----
+	sqlEngine := sqlpkg.NewSQLEngine(db)
+
+	// ---- PostgreSQL wire protocol listener ----
+	pgListener := pg.NewListener(cfg, sqlEngine)
+	pgCtx, pgCancel := context.WithCancel(context.Background())
+	defer pgCancel()
+	go func() {
+		if err := pgListener.ListenAndServe(pgCtx); err != nil {
+			log.Printf("pg: listener error: %v", err)
+		}
+	}()
+
 	// ---- build router ----
 	router := api.NewRouter(cfg, db)
 
@@ -85,5 +100,14 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("server shutdown error: %v", err)
 	}
+
+	// Shutdown PG listener
+	pgCancel()
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutCancel()
+	if err := pgListener.Shutdown(shutCtx); err != nil {
+		log.Printf("pg listener shutdown error: %v", err)
+	}
+
 	log.Println("server stopped")
 }

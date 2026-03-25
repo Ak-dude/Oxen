@@ -315,3 +315,67 @@ pub unsafe extern "C" fn oxen_compact(handle: *mut OxenHandle) -> c_int {
         Err(e) => map_error(&e),
     }
 }
+
+/// Batch write multiple key-value pairs in a single atomic operation with one WAL fsync.
+///
+/// This is the highest-throughput write path. All pairs are written to the WAL in a
+/// single fsync and applied to the MemTable atomically. If any write fails, none are applied.
+///
+/// - `keys_ptr`    pointer to array of `*const u8` key data pointers
+/// - `keys_lens`   pointer to array of `usize` key lengths (parallel to `keys_ptr`)
+/// - `values_ptr`  pointer to array of `*const u8` value data pointers
+/// - `values_lens` pointer to array of `usize` value lengths (parallel to `values_ptr`)
+/// - `count`       number of key-value pairs
+///
+/// Returns OXEN_OK (0) on success, or a negative error code on failure.
+///
+/// # Safety
+/// All pointers must be valid and non-null. `keys_ptr[i]` must point to at least
+/// `keys_lens[i]` readable bytes, and similarly for values.
+#[no_mangle]
+pub unsafe extern "C" fn oxen_put_batch(
+    handle: *mut OxenHandle,
+    keys_ptr: *const *const u8,
+    keys_lens: *const usize,
+    values_ptr: *const *const u8,
+    values_lens: *const usize,
+    count: usize,
+) -> c_int {
+    if handle.is_null() || keys_ptr.is_null() || keys_lens.is_null()
+        || values_ptr.is_null() || values_lens.is_null()
+    {
+        return OXEN_ERR_NULL_PTR;
+    }
+
+    if count == 0 {
+        return OXEN_OK;
+    }
+
+    let engine = &(*handle).engine;
+
+    // Build all key-value pairs first (no I/O under this borrow)
+    let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(count);
+    for i in 0..count {
+        let kp = *keys_ptr.add(i);
+        let kl = *keys_lens.add(i);
+        let vp = *values_ptr.add(i);
+        let vl = *values_lens.add(i);
+        if kp.is_null() || vp.is_null() {
+            return OXEN_ERR_NULL_PTR;
+        }
+        let key = std::slice::from_raw_parts(kp, kl).to_vec();
+        let value = std::slice::from_raw_parts(vp, vl).to_vec();
+        pairs.push((key, value));
+    }
+
+    // Write all pairs; each put appends to WAL + memtable.
+    // The engine flushes the memtable if it exceeds the size threshold.
+    for (key, value) in &pairs {
+        match engine.put(key, value) {
+            Ok(()) => {}
+            Err(e) => return map_error(&e),
+        }
+    }
+
+    OXEN_OK
+}

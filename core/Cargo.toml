@@ -17,9 +17,14 @@ toml = "0.8"
 thiserror = "1"
 log = "0.4"
 env_logger = "0.11"
+rayon = "1.8"
+memmap2 = "0.9"
+crossbeam-channel = "0.5"
+ahash = "0.8"
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+strip = "symbols"

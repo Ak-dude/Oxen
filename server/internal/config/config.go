@@ -11,6 +11,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// PGConfig contains PostgreSQL wire protocol listener settings.
+type PGConfig struct {
+	Enabled  bool              `yaml:"enabled"`
+	Host     string            `yaml:"host"`
+	Port     int               `yaml:"port"`
+	AuthMode string            `yaml:"auth_mode"` // "trust", "cleartext"
+	Users    map[string]string `yaml:"users"`
+	MaxConns int               `yaml:"max_conns"`
+}
+
 // Config holds all runtime configuration for the OxenDB server.
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
@@ -18,6 +28,7 @@ type Config struct {
 	Auth     AuthConfig     `yaml:"auth"`
 	Metrics  MetricsConfig  `yaml:"metrics"`
 	Log      LogConfig      `yaml:"log"`
+	PG       PGConfig       `yaml:"pg"`
 }
 
 // ServerConfig contains HTTP server settings.
@@ -87,7 +98,19 @@ func Default() *Config {
 			Level:  "info",
 			Format: "text",
 		},
+		PG: PGConfig{
+			Enabled:  true,
+			Host:     "0.0.0.0",
+			Port:     5432,
+			AuthMode: "trust",
+			MaxConns: 100,
+		},
 	}
+}
+
+// PGAddr returns the combined host:port listen address for the PostgreSQL wire protocol.
+func (c *Config) PGAddr() string {
+	return fmt.Sprintf("%s:%d", c.PG.Host, c.PG.Port)
 }
 
 // Load reads configuration from a YAML file and applies environment variable
@@ -156,5 +179,13 @@ func applyEnv(cfg *Config) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Server.MaxConns = n
 		}
+	}
+	if v := os.Getenv("OXEN_PG_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.PG.Port = p
+		}
+	}
+	if v := os.Getenv("OXEN_PG_AUTH_MODE"); v != "" {
+		cfg.PG.AuthMode = strings.ToLower(v)
 	}
 }

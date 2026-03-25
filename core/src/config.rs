@@ -2,6 +2,23 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use crate::error::{OxenError, Result};
 
+/// Compression algorithm for SSTable data blocks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CompressionType {
+    /// No compression — lowest CPU, highest disk usage
+    None,
+    /// LZ4 — fast compression with decent ratio
+    Lz4,
+    /// Zstd — slower compression with best ratio
+    Zstd,
+}
+
+impl Default for CompressionType {
+    fn default() -> Self {
+        CompressionType::Lz4
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SyncMode {
     /// fsync on every WAL write — safest, slowest
@@ -43,6 +60,26 @@ pub struct EngineConfig {
 
     /// Number of L0 SSTables that triggers a minor compaction
     pub l0_compaction_trigger: usize,
+
+    /// Group commit window in microseconds. Writes arriving within this window
+    /// are batched into a single WAL fsync for maximum write throughput.
+    /// 0 = disabled (fsync per write). Default: 500 (0.5 ms).
+    pub group_commit_interval_us: u64,
+
+    /// If true, SSTable data blocks are read via memory-mapped files (zero-copy).
+    /// Reduces kernel-to-user copy overhead on read-heavy workloads.
+    pub mmap_sstables: bool,
+
+    /// If true, SSTable merges during compaction use Rayon parallel iterators
+    /// to utilize all available CPU cores.
+    pub parallel_compaction: bool,
+
+    /// Number of immutable MemTables allowed to accumulate before write stalls.
+    /// Higher values allow more buffering at the cost of memory.
+    pub write_buffer_count: usize,
+
+    /// Compression algorithm for SSTable data blocks.
+    pub compression: CompressionType,
 }
 
 impl Default for EngineConfig {
@@ -56,6 +93,11 @@ impl Default for EngineConfig {
             max_open_files: 1000,
             block_cache_mb: 128,
             l0_compaction_trigger: 4,
+            group_commit_interval_us: 500,
+            mmap_sstables: true,
+            parallel_compaction: true,
+            write_buffer_count: 4,
+            compression: CompressionType::Lz4,
         }
     }
 }
@@ -96,6 +138,11 @@ impl EngineConfig {
         if self.l0_compaction_trigger == 0 {
             return Err(OxenError::InvalidArgument(
                 "l0_compaction_trigger must be at least 1".into(),
+            ));
+        }
+        if self.write_buffer_count == 0 {
+            return Err(OxenError::InvalidArgument(
+                "write_buffer_count must be at least 1".into(),
             ));
         }
         Ok(())
