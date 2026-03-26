@@ -138,8 +138,12 @@ func (c *Conn) sendResultSet(rs *result.ResultSet) {
 
 // handleParse handles the 'P' (Parse) message in the extended query protocol.
 func (c *Conn) handleParse(p *pgproto3.Parse) {
+	if c.session.PendingError {
+		return // discard until Sync
+	}
 	plans, err := c.engine.ParseOnly(p.Query)
 	if err != nil {
+		c.session.PendingError = true
 		c.sendError("42601", "ERROR", "parse error: "+err.Error())
 		return
 	}
@@ -159,8 +163,12 @@ func (c *Conn) handleParse(p *pgproto3.Parse) {
 
 // handleBind handles the 'B' (Bind) message in the extended query protocol.
 func (c *Conn) handleBind(b *pgproto3.Bind) {
+	if c.session.PendingError {
+		return // discard until Sync
+	}
 	stmt, ok := c.session.Prepared[b.PreparedStatement]
 	if !ok {
+		c.session.PendingError = true
 		c.sendError("26000", "ERROR", fmt.Sprintf("prepared statement %q does not exist", b.PreparedStatement))
 		return
 	}
@@ -188,6 +196,9 @@ func (c *Conn) handleBind(b *pgproto3.Bind) {
 
 // handleDescribe handles the 'D' (Describe) message in the extended query protocol.
 func (c *Conn) handleDescribe(d *pgproto3.Describe) {
+	if c.session.PendingError {
+		return // discard until Sync
+	}
 	switch d.ObjectType {
 	case 'S':
 		// Describe a prepared statement
@@ -222,8 +233,12 @@ func (c *Conn) handleDescribe(d *pgproto3.Describe) {
 
 // handleExecute handles the 'E' (Execute) message in the extended query protocol.
 func (c *Conn) handleExecute(ex *pgproto3.Execute) {
+	if c.session.PendingError {
+		return // discard until Sync
+	}
 	portal, ok := c.session.Portals[ex.Portal]
 	if !ok {
+		c.session.PendingError = true
 		c.sendError("34000", "ERROR", fmt.Sprintf("portal %q does not exist", ex.Portal))
 		return
 	}
@@ -254,7 +269,12 @@ func (c *Conn) handleExecute(ex *pgproto3.Execute) {
 					}
 				case "commit":
 					if c.session.ActiveTxn != nil {
-						_ = c.session.ActiveTxn.Commit()
+						if cerr := c.session.ActiveTxn.Commit(); cerr != nil {
+							c.sendError("XX000", "ERROR", "commit failed: "+cerr.Error())
+							c.session.TxState = TxFailed
+							finalRS = &result.ResultSet{Tag: "ROLLBACK"}
+							continue
+						}
 					}
 					c.session.TxState = TxIdle
 					c.session.ActiveTxn = nil
@@ -272,6 +292,7 @@ func (c *Conn) handleExecute(ex *pgproto3.Execute) {
 			rs, err := c.engine.ExecPlanDirect(ctx, plan, c.session.ActiveTxn, portal.Args)
 			if err != nil {
 				c.session.TxState = TxFailed
+				c.session.PendingError = true
 				c.sendError("XX000", "ERROR", err.Error())
 				return
 			}
@@ -324,8 +345,8 @@ func (c *Conn) handleExecute(ex *pgproto3.Execute) {
 
 // handleSync handles the 'S' (Sync) message — ends an extended query cycle.
 func (c *Conn) handleSync() {
-	// If we have an implicit auto-commit txn (not started by BEGIN), commit it
-	// For explicit transactions (TxActive), don't auto-commit
+	// Clear any pending extended-query error; Sync is the recovery point.
+	c.session.PendingError = false
 	c.sendReadyForQuery()
 }
 

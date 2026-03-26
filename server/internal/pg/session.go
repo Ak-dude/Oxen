@@ -35,15 +35,16 @@ type Portal struct {
 
 // Session holds per-connection state.
 type Session struct {
-	User      string
-	Database  string
-	AppName   string
-	TxState   TxState
-	ActiveTxn *txn.Txn
-	Prepared  map[string]*PreparedStatement
-	Portals   map[string]*Portal
-	PID       int32
-	SecretKey int32
+	User         string
+	Database     string
+	AppName      string
+	TxState      TxState
+	ActiveTxn    *txn.Txn
+	Prepared     map[string]*PreparedStatement
+	Portals      map[string]*Portal
+	PID          int32
+	SecretKey    int32
+	PendingError bool // true when an extended-query error awaits Sync
 }
 
 // NewSession creates a fresh session with the given parameters.

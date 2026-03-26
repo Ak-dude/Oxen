@@ -94,15 +94,25 @@ doAuth:
 			return fmt.Errorf("auth: expected PasswordMessage, got %T", pwMsg)
 		}
 		// Validate against configured users
-		if expected, exists := c.cfg.PG.Users[c.session.User]; exists {
-			if pw.Password != expected {
+		expected, exists := c.cfg.PG.Users[c.session.User]
+		if !exists {
+			// Reject unknown users when a user list is configured
+			if len(c.cfg.PG.Users) > 0 {
 				_ = c.be.Send(&pgproto3.ErrorResponse{
 					Severity: "FATAL",
-					Code:     "28P01",
-					Message:  "password authentication failed for user \"" + c.session.User + "\"",
+					Code:     "28000",
+					Message:  "role \"" + c.session.User + "\" does not exist",
 				})
-				return fmt.Errorf("auth: bad password for user %q", c.session.User)
+				return fmt.Errorf("auth: unknown user %q", c.session.User)
 			}
+			// No users configured — allow all (trust-equivalent)
+		} else if pw.Password != expected {
+			_ = c.be.Send(&pgproto3.ErrorResponse{
+				Severity: "FATAL",
+				Code:     "28P01",
+				Message:  "password authentication failed for user \"" + c.session.User + "\"",
+			})
+			return fmt.Errorf("auth: bad password for user %q", c.session.User)
 		}
 		if err := c.be.Send(&pgproto3.AuthenticationOk{}); err != nil {
 			return err

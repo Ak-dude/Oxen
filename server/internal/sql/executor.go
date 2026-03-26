@@ -615,7 +615,11 @@ func (e *SQLEngine) execGroupBy(p *SelectPlan, rows []result.Row, colIdx map[str
 			if ok && idx < len(row) {
 				v = row[idx]
 			}
-			keyParts = append(keyParts, fmt.Sprintf("%v", v.NativeValue()))
+			if v.IsNull {
+				keyParts = append(keyParts, "\x00")
+			} else {
+				keyParts = append(keyParts, fmt.Sprintf("\x01%d\x01%v", v.Type, v.NativeValue()))
+			}
 			keyVals = append(keyVals, v)
 		}
 		k := strings.Join(keyParts, "\x00")
@@ -695,15 +699,21 @@ func computeAggregate(agg AggFunc, rows []result.Row, colIdx map[string]int) typ
 			return types.Null
 		}
 		sum := 0.0
+		hasValue := false
 		for _, row := range rows {
 			if idx < len(row) && !row[idx].IsNull {
 				switch row[idx].Type {
 				case types.TypeInteger, types.TypeBigInt:
 					sum += float64(row[idx].IntVal)
+					hasValue = true
 				case types.TypeFloat, types.TypeDouble:
 					sum += row[idx].FloatVal
+					hasValue = true
 				}
 			}
+		}
+		if !hasValue {
+			return types.Null
 		}
 		return types.DoubleValue(sum)
 	case "avg":
@@ -1029,10 +1039,15 @@ func evalExpr(expr Expr, row []types.Value, colIdx map[string]int, args []types.
 		if val.IsNull {
 			return types.Null, nil
 		}
+		hasNull := false
 		for _, itemExpr := range e.List {
 			item, err := evalExpr(itemExpr, row, colIdx, args)
 			if err != nil {
 				return types.Null, err
+			}
+			if item.IsNull {
+				hasNull = true
+				continue
 			}
 			if types.EqualValues(val, item) {
 				if e.Negate {
@@ -1040,6 +1055,10 @@ func evalExpr(expr Expr, row []types.Value, colIdx map[string]int, args []types.
 				}
 				return types.BoolValue(true), nil
 			}
+		}
+		// No match found: if any NULL in list, result is NULL (SQL three-valued logic)
+		if hasNull {
+			return types.Null, nil
 		}
 		if e.Negate {
 			return types.BoolValue(true), nil
@@ -1116,31 +1135,45 @@ func evalBinOp(e *BinOpExpr, row []types.Value, colIdx map[string]int, args []ty
 
 	switch op {
 	case "AND":
-		left, err := evalBool(e.Left, row, colIdx, args)
+		// Three-valued logic: false AND x = false; true AND NULL = NULL
+		lv, err := evalExpr(e.Left, row, colIdx, args)
 		if err != nil {
 			return types.Null, err
 		}
-		if !left {
+		if !lv.IsNull && !lv.BoolVal {
 			return types.BoolValue(false), nil
 		}
-		right, err := evalBool(e.Right, row, colIdx, args)
+		rv, err := evalExpr(e.Right, row, colIdx, args)
 		if err != nil {
 			return types.Null, err
 		}
-		return types.BoolValue(right), nil
+		if !rv.IsNull && !rv.BoolVal {
+			return types.BoolValue(false), nil
+		}
+		if lv.IsNull || rv.IsNull {
+			return types.Null, nil
+		}
+		return types.BoolValue(true), nil
 	case "OR":
-		left, err := evalBool(e.Left, row, colIdx, args)
+		// Three-valued logic: true OR x = true; false OR NULL = NULL
+		lv, err := evalExpr(e.Left, row, colIdx, args)
 		if err != nil {
 			return types.Null, err
 		}
-		if left {
+		if !lv.IsNull && lv.BoolVal {
 			return types.BoolValue(true), nil
 		}
-		right, err := evalBool(e.Right, row, colIdx, args)
+		rv, err := evalExpr(e.Right, row, colIdx, args)
 		if err != nil {
 			return types.Null, err
 		}
-		return types.BoolValue(right), nil
+		if !rv.IsNull && rv.BoolVal {
+			return types.BoolValue(true), nil
+		}
+		if lv.IsNull || rv.IsNull {
+			return types.Null, nil
+		}
+		return types.BoolValue(false), nil
 	}
 
 	left, err := evalExpr(e.Left, row, colIdx, args)
@@ -1160,7 +1193,7 @@ func evalBinOp(e *BinOpExpr, row []types.Value, colIdx map[string]int, args []ty
 	}
 
 	if left.IsNull || right.IsNull {
-		return types.BoolValue(false), nil
+		return types.Null, nil
 	}
 
 	// Type coercion for comparison
